@@ -70,28 +70,45 @@ export class StratumV1Client {
         private readonly externalSharesService: ExternalSharesService
     ) {
 
-        this.socket.on('data', (data: Buffer) => {
-            if (this.isDestroyed) return;
-            this.buffer += data.toString();
-            let lines = this.buffer.split('\n');
-            this.buffer = lines.pop() || ''; // Save the last part of the data (incomplete line) to the buffer
-
-            lines
-                .filter(m => m.length > 0)
-                .forEach(async (m) => {
-                    if (this.isDestroyed) return;
-                    try {
-                        await this.handleMessage(m);
-                    } catch (e) {
-                        if (!this.isDestroyed) {
-                            console.error(`Unhandled message error [${this.extraNonceAndSessionId}]: ${e.code || e.message}`);
-                        }
-                        this.safeDisconnect();
-                    }
-                });
-        });
+        this.socket.on('data', this.handleData.bind(this));
 
 
+    }
+
+    private processingMessages = false;
+    private pendingData: string[] = [];
+
+    private handleData(data: Buffer) {
+        if (this.isDestroyed) return;
+        this.buffer += data.toString();
+        const lines = this.buffer.split('\n');
+        this.buffer = lines.pop() || '';
+
+        const messages = lines.filter(m => m.length > 0);
+        if (messages.length === 0) return;
+
+        this.pendingData.push(...messages);
+        this.processMessages();
+    }
+
+    private async processMessages() {
+        if (this.processingMessages || this.isDestroyed) return;
+        this.processingMessages = true;
+
+        while (this.pendingData.length > 0 && !this.isDestroyed) {
+            const msg = this.pendingData.shift();
+            try {
+                await this.handleMessage(msg);
+            } catch (e: any) {
+                if (!this.isDestroyed) {
+                    console.error(`Unhandled message error [${this.extraNonceAndSessionId}]: ${e.code || e.message}`);
+                }
+                this.safeDisconnect();
+                break;
+            }
+        }
+
+        this.processingMessages = false;
     }
 
     public async destroy() {
@@ -110,7 +127,7 @@ export class StratumV1Client {
         if (this.extraNonceAndSessionId) {
             try {
                 await this.clientService.delete(this.extraNonceAndSessionId);
-            } catch (e) {
+            } catch (e: any) {
                 console.error(`Failed to delete client [${this.extraNonceAndSessionId}]: ${e.message}`);
             }
         }
@@ -177,13 +194,11 @@ export class StratumV1Client {
                         return;
                     }
                 } else {
-                    console.error('Subscription validation error');
                     const err = new StratumErrorMessage(
                         subscriptionMessage.id,
                         eStratumErrorCode.OtherUnknown,
                         'Subscription validation error',
                         errors).response();
-                    console.error(err);
                     const success = await this.write(err);
                     if (!success) {
                         return;
@@ -215,13 +230,11 @@ export class StratumV1Client {
                     }
 
                 } else {
-                    console.error('Configuration validation error');
                     const err = new StratumErrorMessage(
                         configurationMessage.id,
                         eStratumErrorCode.OtherUnknown,
                         'Configuration validation error',
                         errors).response();
-                    console.error(err);
                     const success = await this.write(err);
                     if (!success) {
                         return;
@@ -251,13 +264,11 @@ export class StratumV1Client {
                         return;
                     }
                 } else {
-                    console.error('Authorization validation error');
                     const err = new StratumErrorMessage(
                         authorizationMessage.id,
                         eStratumErrorCode.OtherUnknown,
                         'Authorization validation error',
                         errors).response();
-                    console.error(err);
                     const success = await this.write(err);
                     if (!success) {
                         return;
@@ -293,13 +304,11 @@ export class StratumV1Client {
                     }
                     this.usedSuggestedDifficulty = true;
                 } else {
-                    console.error('Suggest difficulty validation error');
                     const err = new StratumErrorMessage(
                         suggestDifficultyMessage.id,
                         eStratumErrorCode.OtherUnknown,
                         'Suggest difficulty validation error',
                         errors).response();
-                    console.error(err);
                     const success = await this.write(err);
                     if (!success) {
                         return;
@@ -310,8 +319,8 @@ export class StratumV1Client {
             case eRequestMethod.SUBMIT: {
 
                 if (this.stratumInitialized == false) {
-                    console.log('Submit before initalized');
-                    await this.socket.end();
+                    // Silently ignore - miner sent SUBMIT before handshake completed.
+                    // Do NOT disconnect: the miner will be initialized shortly.
                     return;
                 }
 
@@ -339,13 +348,11 @@ export class StratumV1Client {
 
 
                 } else {
-                    console.log('Mining Submit validation error');
                     const err = new StratumErrorMessage(
                         miningSubmitMessage.id,
                         eStratumErrorCode.OtherUnknown,
                         'Mining Submit validation error',
                         errors).response();
-                    console.error(err);
                     const success = await this.write(err);
                     if (!success) {
                         return;
@@ -396,7 +403,7 @@ export class StratumV1Client {
                     this.miningSubmissionHashes.clear();
                 }
                 await this.sendNewMiningJob(jobTemplate);
-            } catch (e) {
+            } catch (e: any) {
                 if (!this.isDestroyed) {
                     console.error(`Job send error [${this.extraNonceAndSessionId}]: ${e.code || e.message}`);
                 }
@@ -665,7 +672,7 @@ export class StratumV1Client {
                 this.safeDisconnect();
                 return false;
             }
-        } catch (error) {
+        } catch (error: any) {
             console.error(`Socket write error [${this.extraNonceAndSessionId}]: ${error.code || error.message}`);
             this.safeDisconnect();
             return false;
