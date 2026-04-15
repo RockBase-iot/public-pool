@@ -43,6 +43,7 @@ export class StratumV1Client {
     private stratumInitialized = false;
     private usedSuggestedDifficulty = false;
     private sessionDifficulty: number = 16384;
+    private isDestroyed = false;
 
     private entity: ClientEntity;
     private creatingEntity: Promise<void>;
@@ -70,6 +71,7 @@ export class StratumV1Client {
     ) {
 
         this.socket.on('data', (data: Buffer) => {
+            if (this.isDestroyed) return;
             this.buffer += data.toString();
             let lines = this.buffer.split('\n');
             this.buffer = lines.pop() || ''; // Save the last part of the data (incomplete line) to the buffer
@@ -77,11 +79,14 @@ export class StratumV1Client {
             lines
                 .filter(m => m.length > 0)
                 .forEach(async (m) => {
+                    if (this.isDestroyed) return;
                     try {
                         await this.handleMessage(m);
                     } catch (e) {
-                        await this.socket.end();
-                        console.error(e);
+                        if (!this.isDestroyed) {
+                            console.error(`Unhandled message error [${this.extraNonceAndSessionId}]: ${e.code || e.message}`);
+                        }
+                        this.safeDisconnect();
                     }
                 });
         });
@@ -90,11 +95,10 @@ export class StratumV1Client {
     }
 
     public async destroy() {
+        if (this.isDestroyed) return;
+        this.isDestroyed = true;
 
-        if (this.extraNonceAndSessionId) {
-            await this.clientService.delete(this.extraNonceAndSessionId);
-        }
-
+        // Unsubscribe first to stop receiving new jobs immediately
         if (this.stratumSubscription != null) {
             this.stratumSubscription.unsubscribe();
         }
@@ -102,6 +106,22 @@ export class StratumV1Client {
         this.backgroundWork.forEach(work => {
             clearInterval(work);
         });
+
+        if (this.extraNonceAndSessionId) {
+            try {
+                await this.clientService.delete(this.extraNonceAndSessionId);
+            } catch (e) {
+                console.error(`Failed to delete client [${this.extraNonceAndSessionId}]: ${e.message}`);
+            }
+        }
+    }
+
+    private safeDisconnect() {
+        if (this.isDestroyed) return;
+        this.destroy();
+        if (!this.socket.destroyed) {
+            this.socket.destroy();
+        }
     }
 
     private getRandomHexString() {
@@ -113,6 +133,7 @@ export class StratumV1Client {
 
 
     private async handleMessage(message: string) {
+        if (this.isDestroyed) return;
         //console.log(`Received from ${this.extraNonceAndSessionId}`, message);
 
         // Parse the message and check if it's the initial subscription message
@@ -121,7 +142,7 @@ export class StratumV1Client {
             parsedMessage = JSON.parse(message);
         } catch (e) {
             //console.log("Invalid JSON");
-            await this.socket.end();
+            this.safeDisconnect();
             return;
         }
 
@@ -369,14 +390,17 @@ export class StratumV1Client {
         }
 
         this.stratumSubscription = this.stratumV1JobsService.newMiningJob$.subscribe(async (jobTemplate) => {
+            if (this.isDestroyed) return;
             try {
                 if(jobTemplate.blockData.clearJobs){
                     this.miningSubmissionHashes.clear();
                 }
                 await this.sendNewMiningJob(jobTemplate);
             } catch (e) {
-                await this.socket.end();
-                console.error(e);
+                if (!this.isDestroyed) {
+                    console.error(`Job send error [${this.extraNonceAndSessionId}]: ${e.code || e.message}`);
+                }
+                this.safeDisconnect();
             }
         });
 
@@ -592,6 +616,7 @@ export class StratumV1Client {
     }
 
     private async checkDifficulty() {
+        if (this.isDestroyed) return;
         const targetDiff = this.statistics.getSuggestedDifficulty(this.sessionDifficulty);
         if (targetDiff == null) {
             return;
@@ -608,7 +633,8 @@ export class StratumV1Client {
             }) + '\n';
 
 
-            await this.socket.write(data);
+            const success = await this.write(data);
+            if (!success) return;
 
             const jobTemplate = await firstValueFrom(this.stratumV1JobsService.newMiningJob$);
             // we need to clear the jobs so that the difficulty set takes effect. Otherwise the different miner implementations can cause issues
@@ -619,6 +645,8 @@ export class StratumV1Client {
     }
 
     private async write(message: string): Promise<boolean> {
+        if (this.isDestroyed) return false;
+
         try {
             if (!this.socket.destroyed && !this.socket.writableEnded) {
 
@@ -634,21 +662,12 @@ export class StratumV1Client {
 
                 return true;
             } else {
-                console.error(`Error: Cannot write to closed or ended socket. ${this.extraNonceAndSessionId} ${message}`);
-                this.destroy();
-                if (!this.socket.destroyed) {
-                    this.socket.destroy();
-                }
+                this.safeDisconnect();
                 return false;
             }
         } catch (error) {
-            this.destroy();
-            if (!this.socket.writableEnded) {
-                await this.socket.end();
-            } else if (!this.socket.destroyed) {
-                this.socket.destroy();
-            }
-            console.error(`Error occurred while writing to socket: ${this.extraNonceAndSessionId}`, error);
+            console.error(`Socket write error [${this.extraNonceAndSessionId}]: ${error.code || error.message}`);
+            this.safeDisconnect();
             return false;
         }
     }

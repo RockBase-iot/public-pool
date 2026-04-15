@@ -33,8 +33,11 @@ EXPOSE 3333 3334 8332
 
 WORKDIR /public-pool
 
+# Install pm2 globally for cluster mode
+RUN npm install -g pm2
+
 # Copy built binaries into the final image
 COPY --from=build /build .
 #COPY .env.example .env
 
-CMD ["/usr/local/bin/node", "dist/main"]
+CMD ["pm2-runtime", "ecosystem.config.js"]

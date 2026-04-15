@@ -16,6 +16,12 @@ import { ExternalSharesService } from './external-shares.service';
 @Injectable()
 export class StratumV1Service implements OnModuleInit {
 
+  private activeConnections = 0;
+  private totalConnections = 0;
+  private totalDisconnections = 0;
+  private errorDisconnections = 0;
+  private timeoutDisconnections = 0;
+
   constructor(
     private readonly bitcoinRpcService: BitcoinRpcService,
     private readonly clientService: ClientService,
@@ -39,6 +45,11 @@ export class StratumV1Service implements OnModuleInit {
         this.startSocketServer();
       }, 1000 * 10)
 
+      // Log connection metrics every 60 seconds
+      setInterval(() => {
+        const instanceId = process.env.NODE_APP_INSTANCE ?? '0';
+        console.log(`[Worker ${instanceId}] Connections: active=${this.activeConnections} total=${this.totalConnections} disconnected=${this.totalDisconnections} errors=${this.errorDisconnections} timeouts=${this.timeoutDisconnections}`);
+      }, 60 * 1000);
   }
 
   private startSocketServer() {
@@ -46,6 +57,11 @@ export class StratumV1Service implements OnModuleInit {
 
       //5 min
       socket.setTimeout(1000 * 60 * 5);
+      socket.setNoDelay(true);
+      socket.setKeepAlive(true, 30000);
+
+      this.activeConnections++;
+      this.totalConnections++;
 
       const client = new StratumV1Client(
         socket,
@@ -62,28 +78,33 @@ export class StratumV1Service implements OnModuleInit {
 
 
       socket.on('close', async (hadError: boolean) => {
+        this.activeConnections--;
+        this.totalDisconnections++;
+        if (hadError) {
+          this.errorDisconnections++;
+        }
         if (client.extraNonceAndSessionId != null) {
           // Handle socket disconnection
           await client.destroy();
-          console.log(`Client ${client.extraNonceAndSessionId} disconnected, hadError?:${hadError}`);
         }
       });
 
       socket.on('timeout', () => {
-        console.log('socket timeout');
+        this.timeoutDisconnections++;
         socket.end();
         socket.destroy();
       });
 
       socket.on('error', async (error: Error) => { });
 
-      //   //console.log(`Client disconnected, socket error,  ${client.extraNonceAndSessionId}`);
-
 
     });
 
+    server.maxConnections = 65535;
+
     server.listen(process.env.STRATUM_PORT, () => {
-      console.log(`Stratum server is listening on port ${process.env.STRATUM_PORT}`);
+      const instanceId = process.env.NODE_APP_INSTANCE ?? '0';
+      console.log(`[Worker ${instanceId}] Stratum server is listening on port ${process.env.STRATUM_PORT}`);
     });
 
   }

@@ -18,19 +18,30 @@ export class AppService implements OnModuleInit {
     }
 
     async onModuleInit() {
-        // if (process.env.NODE_APP_INSTANCE == '0') {
-        //     await this.dataSource.query(`VACUUM;`);
-        // }
-
         //https://phiresky.github.io/blog/2020/sqlite-performance-tuning/
-        // //500 MB DB cache
-        // await this.dataSource.query(`PRAGMA cache_size = -500000;`);
-        //Normal is still completely corruption safe in WAL mode, and means only WAL checkpoints have to wait for FSYNC. 
+        // synchronous=off is safe in WAL mode, only WAL checkpoints skip FSYNC
         await this.dataSource.query(`PRAGMA synchronous = off;`);
-        // //6Gb
-        // await this.dataSource.query(`PRAGMA mmap_size = 6000000000;`);
+        // 512MB DB page cache (negative value = kibibytes)
+        await this.dataSource.query(`PRAGMA cache_size = -512000;`);
+        // 4GB memory-mapped I/O for faster reads
+        await this.dataSource.query(`PRAGMA mmap_size = 4000000000;`);
+        // Store temp tables in memory
+        await this.dataSource.query(`PRAGMA temp_store = MEMORY;`);
+        // Limit WAL file to 64MB before auto-checkpoint
+        await this.dataSource.query(`PRAGMA journal_size_limit = 67108864;`);
 
         if (process.env.NODE_APP_INSTANCE == null || process.env.NODE_APP_INSTANCE == '0') {
+
+            // VACUUM once at startup (after 2 min delay to avoid blocking init)
+            setTimeout(async () => {
+                try {
+                    console.log('Running VACUUM...');
+                    await this.dataSource.query(`VACUUM;`);
+                    console.log('VACUUM complete');
+                } catch (e) {
+                    console.error('VACUUM failed:', e.message);
+                }
+            }, 2 * 60 * 1000);
 
             setInterval(async () => {
                 await this.deleteOldStatistics();
@@ -45,8 +56,6 @@ export class AppService implements OnModuleInit {
                 console.log('Deleting Old Blocks');
                 await this.rpcBlockService.deleteOldBlocks();
             }, 1000 * 60 * 60 * 24);
-
-
 
         }
 
