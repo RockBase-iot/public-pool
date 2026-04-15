@@ -2,7 +2,8 @@ import { Injectable } from '@nestjs/common';
 import * as bitcoinjs from 'bitcoinjs-lib';
 import * as merkle from 'merkle-lib';
 import * as merkleProof from 'merkle-lib/proof';
-import { combineLatest, delay, filter, from, interval, map, Observable, shareReplay, startWith, switchMap, tap } from 'rxjs';
+import { combineLatest, delay, EMPTY, filter, from, interval, map, Observable, shareReplay, startWith, switchMap, tap } from 'rxjs';
+import { catchError } from 'rxjs/operators';
 
 import { MiningJob } from '../models/MiningJob';
 import { BitcoinRpcService } from './bitcoin-rpc.service';
@@ -44,12 +45,18 @@ export class StratumV1JobsService {
 
         this.newMiningJob$ = combineLatest([this.bitcoinRpcService.newBlock$, interval(60000).pipe(delay(this.delay), startWith(-1))]).pipe(
             switchMap(([miningInfo, interval]) => {
-                return from(this.bitcoinRpcService.getBlockTemplate(miningInfo.blocks)).pipe(map((blockTemplate) => {
-                    return {
-                        blockTemplate,
-                        interval
-                    }
-                }))
+                return from(this.bitcoinRpcService.getBlockTemplate(miningInfo.blocks)).pipe(
+                    map((blockTemplate) => {
+                        return {
+                            blockTemplate,
+                            interval
+                        }
+                    }),
+                    catchError((err) => {
+                        console.error(`getBlockTemplate failed (height ${miningInfo.blocks}), will retry on next trigger: ${err.message}`);
+                        return EMPTY;
+                    })
+                )
             }),
             map(({ blockTemplate, interval }) => {
 

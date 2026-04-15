@@ -21,6 +21,7 @@ export class AppService implements OnModuleInit {
         //https://phiresky.github.io/blog/2020/sqlite-performance-tuning/
         // synchronous=off is safe in WAL mode, only WAL checkpoints skip FSYNC
         await this.dataSource.query(`PRAGMA synchronous = off;`);
+        await this.dataSource.query(`PRAGMA busy_timeout = 30000;`);
         // 512MB DB page cache (negative value = kibibytes)
         await this.dataSource.query(`PRAGMA cache_size = -512000;`);
         // 4GB memory-mapped I/O for faster reads

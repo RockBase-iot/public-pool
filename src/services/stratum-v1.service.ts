@@ -22,6 +22,12 @@ export class StratumV1Service implements OnModuleInit {
   private errorDisconnections = 0;
   private timeoutDisconnections = 0;
 
+  // Delta counters for periodic logging (reset each interval)
+  private deltaConnections = 0;
+  private deltaDisconnections = 0;
+  private deltaErrors = 0;
+  private deltaTimeouts = 0;
+
   constructor(
     private readonly bitcoinRpcService: BitcoinRpcService,
     private readonly clientService: ClientService,
@@ -45,15 +51,25 @@ export class StratumV1Service implements OnModuleInit {
         this.startSocketServer();
       }, 1000 * 10)
 
-      // Log connection metrics every 60 seconds
+      // Log connection metrics every 5 seconds
       setInterval(() => {
         const instanceId = process.env.NODE_APP_INSTANCE ?? '0';
-        console.log(`[Worker ${instanceId}] Connections: active=${this.activeConnections} total=${this.totalConnections} disconnected=${this.totalDisconnections} errors=${this.errorDisconnections} timeouts=${this.timeoutDisconnections}`);
-      }, 60 * 1000);
+        console.log(`[Worker ${instanceId}] active=${this.activeConnections} | +${this.deltaConnections} conn, -${this.deltaDisconnections} disc, err=${this.deltaErrors}, timeout=${this.deltaTimeouts} | total: conn=${this.totalConnections} disc=${this.totalDisconnections}`);
+        this.deltaConnections = 0;
+        this.deltaDisconnections = 0;
+        this.deltaErrors = 0;
+        this.deltaTimeouts = 0;
+      }, 5 * 1000);
   }
 
   private startSocketServer() {
     const server = new Server(async (socket: Socket) => {
+
+      // Reject ghost sockets (client already disconnected before we process)
+      if (!socket.remoteAddress || socket.destroyed) {
+        socket.destroy();
+        return;
+      }
 
       //5 min
       socket.setTimeout(1000 * 60 * 5);
@@ -62,6 +78,7 @@ export class StratumV1Service implements OnModuleInit {
 
       this.activeConnections++;
       this.totalConnections++;
+      this.deltaConnections++;
 
       const client = new StratumV1Client(
         socket,
@@ -80,8 +97,10 @@ export class StratumV1Service implements OnModuleInit {
       socket.on('close', async (hadError: boolean) => {
         this.activeConnections--;
         this.totalDisconnections++;
+        this.deltaDisconnections++;
         if (hadError) {
           this.errorDisconnections++;
+          this.deltaErrors++;
         }
         if (client.extraNonceAndSessionId != null) {
           // Handle socket disconnection
@@ -91,6 +110,7 @@ export class StratumV1Service implements OnModuleInit {
 
       socket.on('timeout', () => {
         this.timeoutDisconnections++;
+        this.deltaTimeouts++;
         socket.end();
         socket.destroy();
       });

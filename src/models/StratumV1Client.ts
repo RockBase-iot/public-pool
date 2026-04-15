@@ -185,7 +185,6 @@ export class StratumV1Client {
                         this.sessionStart = new Date();
                         this.statistics = new StratumV1ClientStatistics(this.clientStatisticsService);
                         this.extraNonceAndSessionId = this.getRandomHexString();
-                        console.log(`New client ID: : ${this.extraNonceAndSessionId}, ${this.socket.remoteAddress}:${this.socket.remotePort}`);
                     }
 
                     this.clientSubscription = subscriptionMessage;
@@ -577,16 +576,20 @@ export class StratumV1Client {
                     this.entity.updatedAt = now;
                 }
 
-            } catch (e) {
-                console.log(e);
+            } catch (e: any) {
+                console.error(`Statistics DB error [${this.extraNonceAndSessionId}]: ${e.code || e.message}`);
             }
 
-            if (submissionDifficulty > this.entity.bestDifficulty) {
-                await this.clientService.updateBestDifficulty(this.extraNonceAndSessionId, submissionDifficulty);
-                this.entity.bestDifficulty = submissionDifficulty;
-                if (submissionDifficulty > (await this.addressSettingsService.getSettings(this.clientAuthorization.address, true)).bestDifficulty) {
-                    await this.addressSettingsService.updateBestDifficulty(this.clientAuthorization.address, submissionDifficulty, this.entity.userAgent);
+            try {
+                if (submissionDifficulty > this.entity.bestDifficulty) {
+                    await this.clientService.updateBestDifficulty(this.extraNonceAndSessionId, submissionDifficulty);
+                    this.entity.bestDifficulty = submissionDifficulty;
+                    if (submissionDifficulty > (await this.addressSettingsService.getSettings(this.clientAuthorization.address, true)).bestDifficulty) {
+                        await this.addressSettingsService.updateBestDifficulty(this.clientAuthorization.address, submissionDifficulty, this.entity.userAgent);
+                    }
                 }
+            } catch (e: any) {
+                console.error(`BestDifficulty DB error [${this.extraNonceAndSessionId}]: ${e.code || e.message}`);
             }
 
 

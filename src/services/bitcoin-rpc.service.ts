@@ -119,6 +119,7 @@ export class BitcoinRpcService implements OnModuleInit {
                         await this.rpcBlockService.lockBlock(blockHeight, process.env.NODE_APP_INSTANCE);
                     } catch (e) {
                         result = await this.waitForBlock(blockHeight);
+                        return result;
                     }
                 }
                 result = await this.loadBlockTemplate(blockHeight);
@@ -137,14 +138,22 @@ export class BitcoinRpcService implements OnModuleInit {
     private async loadBlockTemplate(blockHeight: number) {
 
         let blockTemplate: IBlockTemplate;
-        while (blockTemplate == null) {
-            blockTemplate = await this.client.getblocktemplate({
-                template_request: {
-                    rules: ['segwit'],
-                    mode: 'template',
-                    capabilities: ['serverlist', 'proposal']
-                }
-            });
+        const maxRetries = 3;
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                blockTemplate = await this.client.getblocktemplate({
+                    template_request: {
+                        rules: ['segwit'],
+                        mode: 'template',
+                        capabilities: ['serverlist', 'proposal']
+                    }
+                });
+                if (blockTemplate != null) break;
+            } catch (e) {
+                console.error(`loadBlockTemplate attempt ${attempt}/${maxRetries} failed: ${e.message}`);
+                if (attempt === maxRetries) throw e;
+                await new Promise(r => setTimeout(r, 2000 * attempt));
+            }
         }
 
 

@@ -17,24 +17,40 @@ export class ClientStatisticsService {
 
     }
 
-    public async update(clientStatistic: Partial<ClientStatisticsEntity>) {
+    private async retryOnBusy<T>(operation: () => Promise<T>, maxRetries = 3): Promise<T> {
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                return await operation();
+            } catch (e: any) {
+                if (e.code === 'SQLITE_BUSY' && attempt < maxRetries) {
+                    await new Promise(r => setTimeout(r, 100 * attempt));
+                    continue;
+                }
+                throw e;
+            }
+        }
+    }
 
-        await this.clientStatisticsRepository.update({
-            address: clientStatistic.address,
-            clientName: clientStatistic.clientName,
-            sessionId: clientStatistic.sessionId,
-            time: clientStatistic.time
-        },
+    public async update(clientStatistic: Partial<ClientStatisticsEntity>) {
+        return this.retryOnBusy(() =>
+            this.clientStatisticsRepository.update({
+                address: clientStatistic.address,
+                clientName: clientStatistic.clientName,
+                sessionId: clientStatistic.sessionId,
+                time: clientStatistic.time
+            },
             {
                 shares: clientStatistic.shares,
                 acceptedCount: clientStatistic.acceptedCount,
                 updatedAt: new Date()
-            });
-
+            })
+        );
     }
+
     public async insert(clientStatistic: Partial<ClientStatisticsEntity>) {
-        // If no rows were updated, insert a new record
-        await this.clientStatisticsRepository.insert(clientStatistic);
+        return this.retryOnBusy(() =>
+            this.clientStatisticsRepository.insert(clientStatistic)
+        );
     }
 
     public async deleteOldStatistics() {
