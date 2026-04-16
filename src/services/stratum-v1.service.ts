@@ -41,9 +41,9 @@ export class StratumV1Service implements OnModuleInit {
         private readonly addressSettingsService: AddressSettingsService,
         private readonly externalSharesService: ExternalSharesService
     ) {
-        // Default: ~200KB per connection, use 60% of heap for connections
+        // ~500KB per connection (includes broadcast buffers, job objects, write queues)
         const heapMB = parseInt(process.env.NODE_HEAP_MB) || 512;
-        this.maxConnections = parseInt(process.env.MAX_CONNECTIONS) || Math.floor(heapMB * 0.6 / 0.2);
+        this.maxConnections = parseInt(process.env.MAX_CONNECTIONS) || Math.floor(heapMB * 0.5 / 0.5);
     }
 
     async onModuleInit(): Promise<void> {

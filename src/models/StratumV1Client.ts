@@ -42,7 +42,7 @@ export class StratumV1Client {
     private statistics: StratumV1ClientStatistics;
     private stratumInitialized = false;
     private usedSuggestedDifficulty = false;
-    private sessionDifficulty: number = 100000;
+    private sessionDifficulty: number = 0.001;
     private isDestroyed = false;
 
     private clientEntity: ClientEntity;
@@ -59,7 +59,7 @@ export class StratumV1Client {
     private static broadcastQueue: { gen: number, fn: () => Promise<void> }[] = [];
     private static broadcastProcessing = false;
     private static currentBroadcastGen = 0;
-    private static readonly BROADCAST_BATCH_SIZE = 50;
+    private static readonly BROADCAST_BATCH_SIZE = 20;
 
     constructor(
         public readonly socket: Socket,
@@ -385,6 +385,14 @@ export class StratumV1Client {
             return;
         }
 
+        // Use env DEFAULT_DIFFICULTY if set and miner didn't suggest one
+        if (!this.usedSuggestedDifficulty) {
+            const envDiff = parseFloat(this.configService.get('DEFAULT_DIFFICULTY'));
+            if (Number.isFinite(envDiff) && envDiff > 0) {
+                this.sessionDifficulty = envDiff;
+            }
+        }
+
         switch (this.clientSubscription.userAgent) {
             case 'cpuminer': {
                 this.sessionDifficulty = 0.1;
@@ -434,7 +442,7 @@ export class StratumV1Client {
         this.backgroundWork.push(
             setInterval(async () => {
                 await this.checkDifficulty();
-            }, 60 * 1000)
+            }, 5 * 60 * 1000)
         );
 
     }
@@ -678,13 +686,15 @@ export class StratumV1Client {
 
     private async checkDifficulty() {
         if (this.isDestroyed) return;
+        // Honor miner's suggested difficulty — do not auto-adjust
+        if (this.usedSuggestedDifficulty) return;
         const targetDiff = this.statistics.getSuggestedDifficulty(this.sessionDifficulty);
         if (targetDiff == null) {
             return;
         }
 
         if (targetDiff != this.sessionDifficulty) {
-            console.log(`[${this.extraNonceAndSessionId}] Adjusting difficulty ${this.sessionDifficulty} -> ${targetDiff}`);
+            const oldDiff = this.sessionDifficulty;
             this.sessionDifficulty = targetDiff;
 
             const data = JSON.stringify({
@@ -745,7 +755,11 @@ export class StratumV1Client {
                 return false;
             }
         } catch (error: any) {
-            console.error(`Socket write error [${this.extraNonceAndSessionId}]: ${error.code || error.message}`);
+            // EPIPE/ECONNRESET are expected when miners disconnect — don't flood logs
+            const code = error.code || '';
+            if (code !== 'EPIPE' && code !== 'ECONNRESET' && code !== 'ERR_STREAM_DESTROYED') {
+                console.error(`Socket write error [${this.extraNonceAndSessionId}]: ${code || error.message}`);
+            }
             this.safeDisconnect();
             return false;
         }
