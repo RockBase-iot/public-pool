@@ -407,8 +407,32 @@ export class StratumV1Client {
             }
         }
 
+        // Send the current job immediately to this client (bypass broadcast queue)
+        // so the miner doesn't have to wait behind hundreds of other clients
+        let initialTemplateId: string = null;
+        const latestTemplate = this.stratumV1JobsService.latestJobTemplate;
+        if (latestTemplate) {
+            initialTemplateId = latestTemplate.blockData.id;
+            try {
+                await this.sendNewMiningJob(latestTemplate);
+            } catch (e: any) {
+                if (!this.isDestroyed) {
+                    console.error(`Initial job send error [${this.extraNonceAndSessionId}]: ${e.code || e.message}`);
+                }
+                this.safeDisconnect();
+                return;
+            }
+        }
+
         this.stratumSubscription = this.stratumV1JobsService.newMiningJob$.subscribe((jobTemplate) => {
             if (this.isDestroyed) return;
+
+            // Skip the replayed initial template since we already sent it directly
+            if (initialTemplateId && jobTemplate.blockData.id === initialTemplateId) {
+                initialTemplateId = null;
+                return;
+            }
+            initialTemplateId = null;
 
             if (jobTemplate.blockData.clearJobs) {
                 this.miningSubmissionHashes.clear();

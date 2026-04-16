@@ -19,6 +19,12 @@ export class RpcBlockService {
         });
     }
 
+    public getLatestSavedBlockTemplate() {
+        return this.rpcBlockRepository.findOne({
+            order: { blockHeight: 'DESC' }
+        });
+    }
+
     public saveBlock(blockHeight: number, data: string): Promise<InsertResult> {
         return this.rpcBlockRepository.upsert({ blockHeight, data }, ['blockHeight']);
     }

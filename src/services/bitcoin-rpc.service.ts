@@ -91,6 +91,20 @@ export class BitcoinRpcService implements OnModuleInit {
                     console.error(`${processTag} Error processing pubsub miningInfo: ${e.message}`);
                 }
             });
+
+            // Load the latest template from DB immediately so miners get jobs
+            // before the next pubsub publish (which could be up to 60s away)
+            try {
+                const latestBlock = await this.rpcBlockService.getLatestSavedBlockTemplate();
+                if (latestBlock?.data) {
+                    this._newBlockTemplate$.next(JSON.parse(latestBlock.data));
+                    console.log(`${processTag} Loaded initial block template from DB, height=${latestBlock.blockHeight}`);
+                } else {
+                    console.warn(`${processTag} No saved block template found in DB at startup`);
+                }
+            } catch (e: any) {
+                console.error(`${processTag} Failed to load initial block template: ${e.message}`);
+            }
         } else {
             console.log('Using ZMQ');
             const sock = new zmq.Subscriber;
