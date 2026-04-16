@@ -54,6 +54,8 @@ export class StratumV1Service implements OnModuleInit {
             } catch (e: any) {
                 console.error(`Failed to clean up stale clients on startup: ${e.message}`);
             }
+            // Master process handles block templates, RPC, and DB housekeeping only — no miner connections
+            return;
         }
 
         // wait for all the other processes to init for an even connection distribution
@@ -105,7 +107,10 @@ export class StratumV1Service implements OnModuleInit {
         this.activeConnections++;
         this.totalConnections++;
 
+        let cleanedUp = false;
         const cleanup = async (reason: string) => {
+            if (cleanedUp) return;
+            cleanedUp = true;
             this.activeConnections--;
             if (client.extraNonceAndSessionId != null) {
                 try {

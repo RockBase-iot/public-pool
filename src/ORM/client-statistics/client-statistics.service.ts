@@ -72,32 +72,43 @@ export class ClientStatisticsService {
             return;
         }
 
-        // UPSERT: INSERT new rows or UPDATE existing ones in a single batch
-        const query = `
-            INSERT INTO "client_statistics_entity" ("clientId", "time", "shares", "acceptedCount", "address", "clientName", "sessionId", "createdAt", "updatedAt")
-            SELECT unnest($1::uuid[]) AS "clientId",
-                   unnest($2::bigint[]) AS "time",
-                   unnest($3::numeric[]) AS "shares",
-                   unnest($4::int[]) AS "acceptedCount",
-                   unnest($5::varchar[]) AS "address",
-                   unnest($6::varchar[]) AS "clientName",
-                   unnest($7::varchar[]) AS "sessionId",
-                   NOW() AS "createdAt",
-                   NOW() AS "updatedAt"
-            ON CONFLICT ("clientId", "time")
-            DO UPDATE SET
-                "shares" = EXCLUDED."shares",
-                "acceptedCount" = EXCLUDED."acceptedCount",
-                "updatedAt" = NOW();
-        `;
+        // UPSERT in chunks to avoid holding a DB connection for too long
+        const CHUNK_SIZE = 50;
+        const start = Date.now();
+        for (let i = 0; i < clientIds.length; i += CHUNK_SIZE) {
+            const cIds = clientIds.slice(i, i + CHUNK_SIZE);
+            const cTimes = times.slice(i, i + CHUNK_SIZE);
+            const cShares = sharesArr.slice(i, i + CHUNK_SIZE);
+            const cAccepted = acceptedCounts.slice(i, i + CHUNK_SIZE);
+            const cAddresses = addresses.slice(i, i + CHUNK_SIZE);
+            const cNames = clientNames.slice(i, i + CHUNK_SIZE);
+            const cSessions = sessionIds.slice(i, i + CHUNK_SIZE);
 
-        try {
-            const start = Date.now();
-            await this.clientStatisticsRepository.query(query, [clientIds, times, sharesArr, acceptedCounts, addresses, clientNames, sessionIds]);
-            console.log(`Bulk stats upsert: ${clientIds.length} rows in ${Date.now() - start}ms`);
-        } catch (error: any) {
-            console.error(`Bulk stats upsert failed (${clientIds.length} rows): ${error.message}`);
+            const query = `
+                INSERT INTO "client_statistics_entity" ("clientId", "time", "shares", "acceptedCount", "address", "clientName", "sessionId", "createdAt", "updatedAt")
+                SELECT unnest($1::uuid[]) AS "clientId",
+                       unnest($2::bigint[]) AS "time",
+                       unnest($3::numeric[]) AS "shares",
+                       unnest($4::int[]) AS "acceptedCount",
+                       unnest($5::varchar[]) AS "address",
+                       unnest($6::varchar[]) AS "clientName",
+                       unnest($7::varchar[]) AS "sessionId",
+                       NOW() AS "createdAt",
+                       NOW() AS "updatedAt"
+                ON CONFLICT ("clientId", "time")
+                DO UPDATE SET
+                    "shares" = EXCLUDED."shares",
+                    "acceptedCount" = EXCLUDED."acceptedCount",
+                    "updatedAt" = NOW();
+            `;
+
+            try {
+                await this.clientStatisticsRepository.query(query, [cIds, cTimes, cShares, cAccepted, cAddresses, cNames, cSessions]);
+            } catch (error: any) {
+                console.error(`Bulk stats upsert chunk failed (${cIds.length} rows): ${error.message}`);
+            }
         }
+        console.log(`Bulk stats upsert: ${clientIds.length} rows in ${Date.now() - start}ms`);
     }
 
     public async insert(clientStatistic: Partial<ClientStatisticsEntity>) {

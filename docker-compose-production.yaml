@@ -49,12 +49,22 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '1.0'
-          memory: 1G
+          cpus: '2.0'
+          memory: 2G
     environment:
       POSTGRES_USER: ${DB_USERNAME:-publicpool}
       POSTGRES_PASSWORD: ${DB_PASSWORD:-publicpool}
       POSTGRES_DB: ${DB_DATABASE:-publicpool}
+    command:
+      - "postgres"
+      - "-c"
+      - "shared_buffers=512MB"
+      - "-c"
+      - "work_mem=16MB"
+      - "-c"
+      - "effective_cache_size=1GB"
+      - "-c"
+      - "max_connections=200"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:

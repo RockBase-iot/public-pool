@@ -93,26 +93,33 @@ export class ClientService {
             return;
         }
 
-        const query = `
-            UPDATE "client_entity" ce
-            SET "hashRate" = th."hashRate",
-                "deletedAt" = NULL,
-                "updatedAt" = th."updatedAt"
-            FROM (
-                SELECT unnest($1::uuid[]) as id,
-                       unnest($2::decimal[]) as "hashRate",
-                       unnest($3::timestamp[]) as "updatedAt"
-            ) th
-            WHERE ce.id = th.id;
-        `;
+        const CHUNK_SIZE = 50;
+        const start = Date.now();
+        for (let i = 0; i < ids.length; i += CHUNK_SIZE) {
+            const chunkIds = ids.slice(i, i + CHUNK_SIZE);
+            const chunkHashRates = hashRates.slice(i, i + CHUNK_SIZE);
+            const chunkUpdatedAts = updatedAts.slice(i, i + CHUNK_SIZE);
 
-        try {
-            const start = Date.now();
-            await this.clientRepository.query(query, [ids, hashRates, updatedAts]);
-            console.log(`Bulk heartbeat update: ${ids.length} rows in ${Date.now() - start}ms`);
-        } catch (error) {
-            console.error(`Bulk heartbeat failed (${ids.length} rows): ${error.message}`);
+            const query = `
+                UPDATE "client_entity" ce
+                SET "hashRate" = th."hashRate",
+                    "deletedAt" = NULL,
+                    "updatedAt" = th."updatedAt"
+                FROM (
+                    SELECT unnest($1::uuid[]) as id,
+                           unnest($2::decimal[]) as "hashRate",
+                           unnest($3::timestamp[]) as "updatedAt"
+                ) th
+                WHERE ce.id = th.id;
+            `;
+
+            try {
+                await this.clientRepository.query(query, [chunkIds, chunkHashRates, chunkUpdatedAts]);
+            } catch (error) {
+                console.error(`Bulk heartbeat chunk failed (${chunkIds.length} rows): ${error.message}`);
+            }
         }
+        console.log(`Bulk heartbeat update: ${ids.length} rows in ${Date.now() - start}ms`);
     }
 
 

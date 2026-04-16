@@ -76,7 +76,7 @@ const ORMModules = [
                     ],
                     synchronize: configService.get('PRODUCTION') != 'true' && process.env.MASTER === 'true',
                     logging: false,
-                    poolSize: parseInt(configService.get('DB_POOL_SIZE')) || 5,
+                    poolSize: parseInt(configService.get('DB_POOL_SIZE')) || 10,
                     migrations: [
                         UniqueNonceIndex,
                         UniqueClientStatisticsIndex

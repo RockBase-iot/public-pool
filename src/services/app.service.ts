@@ -78,6 +78,8 @@ export class AppService implements OnModuleInit {
 
         }
 
+        // Stagger bulk DB operations to avoid connection pool contention
+        // Stats at 0s, heartbeat at 15s offset within each 30s cycle
         setInterval(async () => {
             try {
                 await this.clientStatisticsService.doBulkAsyncUpdate();
@@ -86,13 +88,15 @@ export class AppService implements OnModuleInit {
             }
         }, 1000 * 30);
 
-        setInterval(async () => {
-            try {
-                await this.clientService.doBulkHeartbeatUpdate();
-            } catch (e: any) {
-                console.error(`${processTag} doBulkHeartbeatUpdate error: ${e.message}`);
-            }
-        }, 1000 * 30);
+        setTimeout(() => {
+            setInterval(async () => {
+                try {
+                    await this.clientService.doBulkHeartbeatUpdate();
+                } catch (e: any) {
+                    console.error(`${processTag} doBulkHeartbeatUpdate error: ${e.message}`);
+                }
+            }, 1000 * 30);
+        }, 15000);
 
     }
 
