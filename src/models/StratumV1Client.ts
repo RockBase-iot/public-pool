@@ -534,10 +534,10 @@ export class StratumV1Client {
         }
 
         const submissionHash = submission.jobId + ':' + submission.hash();
-        if (this.miningSubmissionHashes.size > 100000) {
+        if (this.miningSubmissionHashes.size > 10000) {
             // Evict oldest half instead of clearing everything — preserves recent dedup coverage
             const iter = this.miningSubmissionHashes.values();
-            const deleteCount = 50000;
+            const deleteCount = 5000;
             for (let i = 0; i < deleteCount; i++) {
                 const val = iter.next();
                 if (val.done) break;

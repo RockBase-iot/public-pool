@@ -111,23 +111,18 @@ export class StratumV1ClientStatistics {
     }
 
     private nearestPowerOfTwo(val): number {
-        if (val === 0) {
+        if (!val || val <= 0 || !Number.isFinite(val)) {
             return null;
         }
         if (val < MIN_DIFF) {
             return MIN_DIFF;
         }
-        let x = val | (val >> 1);
-        x = x | (x >> 2);
-        x = x | (x >> 4);
-        x = x | (x >> 8);
-        x = x | (x >> 16);
-        x = x | (x >> 32);
-        const res = x - (x >> 1);
-        if (res == 0 && val * 100 < MIN_DIFF) {
+        // Use log2 to correctly handle fractional difficulties (bitwise ops truncate floats to 0)
+        const result = Math.pow(2, Math.round(Math.log2(val)));
+        if (result < MIN_DIFF) {
             return MIN_DIFF;
         }
-        return res;
+        return result;
     }
 
 }

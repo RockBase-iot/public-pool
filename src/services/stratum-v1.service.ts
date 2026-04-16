@@ -27,6 +27,8 @@ export class StratumV1Service implements OnModuleInit {
     private errorClosure = 0;
     private activeConnections = 0;
     private totalConnections = 0;
+    private rejectedConnections = 0;
+    private maxConnections: number;
 
     constructor(
         private readonly bitcoinRpcService: BitcoinRpcService,
@@ -39,7 +41,9 @@ export class StratumV1Service implements OnModuleInit {
         private readonly addressSettingsService: AddressSettingsService,
         private readonly externalSharesService: ExternalSharesService
     ) {
-
+        // Default: ~200KB per connection, use 60% of heap for connections
+        const heapMB = parseInt(process.env.NODE_HEAP_MB) || 512;
+        this.maxConnections = parseInt(process.env.MAX_CONNECTIONS) || Math.floor(heapMB * 0.6 / 0.2);
     }
 
     async onModuleInit(): Promise<void> {
@@ -65,13 +69,19 @@ export class StratumV1Service implements OnModuleInit {
         }, (10000));
 
         const processTag = `[Worker:${process.pid}]`;
+        console.log(`${processTag} Max connections per process: ${this.maxConnections}`);
         setInterval(() => {
-            console.log(`${processTag} Connections: active=${this.activeConnections} total=${this.totalConnections} | Socket stats: ${this.emptySocket} empty, ${this.socketTimeout} timeouts, ${this.normalClosure} normal close, ${this.errorClosure} error close`);
+            const mem = process.memoryUsage();
+            const heapUsedMB = (mem.heapUsed / 1024 / 1024).toFixed(1);
+            const heapTotalMB = (mem.heapTotal / 1024 / 1024).toFixed(1);
+            const rssMB = (mem.rss / 1024 / 1024).toFixed(1);
+            console.log(`${processTag} Connections: active=${this.activeConnections} total=${this.totalConnections} rejected=${this.rejectedConnections} | Heap: ${heapUsedMB}/${heapTotalMB}MB RSS: ${rssMB}MB | Socket stats: ${this.emptySocket} empty, ${this.socketTimeout} timeouts, ${this.normalClosure} normal close, ${this.errorClosure} error close`);
             this.emptySocket = 0;
             this.socketTimeout = 0;
             this.normalClosure = 0;
             this.errorClosure = 0;
             this.totalConnections = 0;
+            this.rejectedConnections = 0;
         }, 1000 * 60);
 
     }
@@ -142,6 +152,13 @@ export class StratumV1Service implements OnModuleInit {
                 return;
             }
 
+            // Enforce connection cap to prevent OOM
+            if (this.activeConnections >= this.maxConnections) {
+                this.rejectedConnections++;
+                socket.destroy();
+                return;
+            }
+
             // Set 15-minute timeout
             socket.setTimeout(1000 * 60 * 15);
             socket.setNoDelay(true);
@@ -177,6 +194,13 @@ export class StratumV1Service implements OnModuleInit {
         const server = createServer(tlsOptions, async (socket: TLSSocket) => {
 
             if (!socket.remoteAddress || socket.destroyed) {
+                socket.destroy();
+                return;
+            }
+
+            // Enforce connection cap to prevent OOM
+            if (this.activeConnections >= this.maxConnections) {
+                this.rejectedConnections++;
                 socket.destroy();
                 return;
             }

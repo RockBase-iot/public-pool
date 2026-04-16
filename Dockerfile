@@ -33,9 +33,9 @@ EXPOSE 3333 3334 8332
 
 WORKDIR /public-pool
 
-# Configurable heap size via build-arg / env (default 512MB for small servers)
-ENV NODE_HEAP_MB=512
-ENV PM2_MAX_MEMORY=800M
+# Configurable heap size via build-arg / env
+ENV NODE_HEAP_MB=1024
+ENV PM2_MAX_MEMORY=1500M
 ENV PM2_WORKERS=1
 
 # Install pm2 globally for cluster mode
