@@ -1,25 +1,28 @@
-import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
+import { Column, Entity, Index, OneToMany, PrimaryGeneratedColumn } from 'typeorm';
 
-import { DateTimeTransformer } from '../utils/DateTimeTransformer';
+import { ClientStatisticsEntity } from '../client-statistics/client-statistics.entity';
 import { TrackedEntity } from '../utils/TrackedEntity.entity';
 
-//https://www.sqlite.org/withoutrowid.html
 
-//The WITHOUT ROWID optimization is likely to be helpful for tables that have non-integer
-// or composite (multi-column) PRIMARY KEYs and that do not store large strings or BLOBs.
-//WITHOUT ROWID tables work best when individual rows are not too large.
-@Entity({ withoutRowid: true })
-@Index(['address', 'clientName', 'sessionId'], { unique: true })
+@Entity()
+@Index("IDX_unique_nonce", { synchronize: false })
+@Index('idx_client_cleanup', ['id'], {
+    where: '"deletedAt" IS NULL',
+    // This is a partial (filtered) index — only indexes active clients
+})
 export class ClientEntity extends TrackedEntity {
 
+    @PrimaryGeneratedColumn('uuid')
+    id: string;
 
-    @PrimaryColumn({ length: 62, type: 'varchar' })
+    @Index()
+    @Column({ length: 62, type: 'varchar' })
     address: string;
 
-    @PrimaryColumn({ length: 64, type: 'varchar' })
+    @Column({ length: 64, type: 'varchar' })
     clientName: string;
 
-    @PrimaryColumn({ length: 8, type: 'varchar' })
+    @Column({ length: 8, type: 'varchar', })
     sessionId: string;
 
 
@@ -27,15 +30,20 @@ export class ClientEntity extends TrackedEntity {
     userAgent: string;
 
 
-
-    @Column({ type: 'datetime', transformer: new DateTimeTransformer() })
+    @Column({ type: 'timestamp' })
     startTime: Date;
 
-    @Column({ type: 'real', default: 0 })
+    @Column({ type: 'decimal', default: 0 })
     bestDifficulty: number
 
-    @Column({ default: 0 })
+    @Column({ default: 0, type: 'decimal' })
     hashRate: number;
+
+    @OneToMany(
+        () => ClientStatisticsEntity,
+        clientStatisticsEntity => clientStatisticsEntity.client
+    )
+    statistics: ClientStatisticsEntity[]
 
 }
 

@@ -5,7 +5,7 @@ import { TrackedEntity } from '../utils/TrackedEntity.entity';
 @Entity()
 export class BlocksEntity extends TrackedEntity {
 
-    @PrimaryGeneratedColumn()
+    @PrimaryGeneratedColumn({type: 'bigint'})
     id: number;
 
     @Column()
@@ -20,7 +20,7 @@ export class BlocksEntity extends TrackedEntity {
     @Column({ length: 8, type: 'varchar' })
     sessionId: string;
 
-    @Column()
+    @Column({ type: 'text' })
     blockData: string;
 
 }

@@ -1,8 +1,10 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 
+import { UserAgentReportService } from '../ORM/_views/user-agent-report/user-agent-report.service';
 import { ClientStatisticsService } from '../ORM/client-statistics/client-statistics.service';
 import { ClientService } from '../ORM/client/client.service';
+import { HomeGraphService } from '../ORM/home-graph/home-graph.service';
 import { RpcBlockService } from '../ORM/rpc-block/rpc-block.service';
 
 @Injectable()
@@ -11,54 +13,86 @@ export class AppService implements OnModuleInit {
     constructor(
         private readonly clientStatisticsService: ClientStatisticsService,
         private readonly clientService: ClientService,
-        private readonly dataSource: DataSource,
         private readonly rpcBlockService: RpcBlockService,
+        private readonly homeGraphService: HomeGraphService,
+        private readonly dataSource: DataSource,
+        private readonly userAgentReportService: UserAgentReportService
     ) {
 
     }
 
     async onModuleInit() {
-        //https://phiresky.github.io/blog/2020/sqlite-performance-tuning/
-        // synchronous=off is safe in WAL mode, only WAL checkpoints skip FSYNC
-        await this.dataSource.query(`PRAGMA synchronous = off;`);
-        await this.dataSource.query(`PRAGMA busy_timeout = 30000;`);
-        // 512MB DB page cache (negative value = kibibytes)
-        await this.dataSource.query(`PRAGMA cache_size = -512000;`);
-        // 4GB memory-mapped I/O for faster reads
-        await this.dataSource.query(`PRAGMA mmap_size = 4000000000;`);
-        // Store temp tables in memory
-        await this.dataSource.query(`PRAGMA temp_store = MEMORY;`);
-        // Limit WAL file to 64MB before auto-checkpoint
-        await this.dataSource.query(`PRAGMA journal_size_limit = 67108864;`);
 
-        if (process.env.NODE_APP_INSTANCE == null || process.env.NODE_APP_INSTANCE == '0') {
+        const processTag = process.env.MASTER === 'true' ? '[Master]' : `[Worker:${process.pid}]`;
+        console.log(`${processTag} AppService initialized`);
 
-            // VACUUM once at startup (after 2 min delay to avoid blocking init)
-            setTimeout(async () => {
-                try {
-                    console.log('Running VACUUM...');
-                    await this.dataSource.query(`VACUUM;`);
-                    console.log('VACUUM complete');
-                } catch (e) {
-                    console.error('VACUUM failed:', e.message);
-                }
-            }, 2 * 60 * 1000);
+        if (process.env.MASTER == 'true') {
 
             setInterval(async () => {
-                await this.deleteOldStatistics();
+                try {
+                    await this.deleteOldStatistics();
+                } catch (e: any) {
+                    console.error(`${processTag} deleteOldStatistics error: ${e.message}`);
+                }
             }, 1000 * 60 * 60);
 
             setInterval(async () => {
-                console.log('Killing dead clients');
-                await this.clientService.killDeadClients();
+                try {
+                    console.log(`${processTag} Killing dead clients`);
+                    let rounds = 0;
+                    while (await this.clientService.killDeadClients()) {
+                        rounds++;
+                    }
+                    console.log(`${processTag} Finished killing clients (${rounds} rounds)`);
+                } catch (e: any) {
+                    console.error(`${processTag} killDeadClients error: ${e.message}`);
+                }
             }, 1000 * 60 * 5);
 
             setInterval(async () => {
-                console.log('Deleting Old Blocks');
-                await this.rpcBlockService.deleteOldBlocks();
+                try {
+                    console.log(`${processTag} Deleting old blocks`);
+                    await this.rpcBlockService.deleteOldBlocks();
+                } catch (e: any) {
+                    console.error(`${processTag} deleteOldBlocks error: ${e.message}`);
+                }
             }, 1000 * 60 * 60 * 24);
 
+            setInterval(async () => {
+                try {
+                    await this.updateChart();
+                } catch (e: any) {
+                    console.error(`${processTag} updateChart error: ${e.message}`);
+                }
+            }, 1000 * 60 * 10);
+
+            setInterval(async () => {
+                try {
+                    console.log(`${processTag} Refreshing user agent report view`);
+                    await this.userAgentReportService.refreshReport();
+                    console.log(`${processTag} Finished refreshing user agent report view`);
+                } catch (e: any) {
+                    console.error(`${processTag} refreshReport error: ${e.message}`);
+                }
+            }, 1000 * 60 * 5);
+
         }
+
+        setInterval(async () => {
+            try {
+                await this.clientStatisticsService.doBulkAsyncUpdate();
+            } catch (e: any) {
+                console.error(`${processTag} doBulkAsyncUpdate error: ${e.message}`);
+            }
+        }, 1000 * 30);
+
+        setInterval(async () => {
+            try {
+                await this.clientService.doBulkHeartbeatUpdate();
+            } catch (e: any) {
+                console.error(`${processTag} doBulkHeartbeatUpdate error: ${e.message}`);
+            }
+        }, 1000 * 30);
 
     }
 
@@ -73,4 +107,40 @@ export class AppService implements OnModuleInit {
     }
 
 
+    private async updateChart() {
+        console.log('Updating Chart');
+
+        const latestGraphUpdate = await this.homeGraphService.getLatestTime();
+
+
+        const data = await this.dataSource.query(`
+            SELECT
+                time AS label,
+                ROUND(((SUM(shares) * 4294967296) / 600)) AS data
+            FROM
+                client_statistics_entity AS entry
+            WHERE
+                entry.time > $1
+            GROUP BY
+                time
+            ORDER BY
+                time
+            LIMIT 144;
+        `, [latestGraphUpdate.getTime()])
+
+        console.log(`Fetched ${data.length} chart rows`);
+
+        if (data.length < 2) {
+            return;
+        }
+
+        const result = data.slice(0, data.length - 1);
+
+        try {
+            await this.homeGraphService.save(result);
+        } catch (e: any) {
+            console.error(`Chart save error: ${e.message}`);
+        }
+
+    }
 }

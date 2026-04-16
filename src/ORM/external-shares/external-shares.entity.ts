@@ -13,10 +13,10 @@ export class ExternalSharesEntity extends TrackedEntity {
     @Column()
     clientName: string;
 
-    @Column({ type: 'integer' })
+    @Column({ type: 'bigint' })
     time: number;
 
-    @Column({ type: 'real' })
+    @Column({ type: 'float' })
     difficulty: number;
 
     @Column({ length: 128, type: 'varchar', nullable: true })
@@ -25,6 +25,6 @@ export class ExternalSharesEntity extends TrackedEntity {
     @Column({ length: 128, type: 'varchar', nullable: true })
     externalPoolName: string;
 
-    @Column()
+    @Column({ type: 'text' })
     header: string;
 }

@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
+import { DataSource, Repository } from 'typeorm';
 
 import { ClientStatisticsEntity } from './client-statistics.entity';
 
@@ -8,49 +8,100 @@ import { ClientStatisticsEntity } from './client-statistics.entity';
 @Injectable()
 export class ClientStatisticsService {
 
+    private bulkAsyncUpdates: {
+        [key: string]: Partial<ClientStatisticsEntity>
+    } = {};
+
     constructor(
 
-
+        @InjectDataSource()
+        private dataSource: DataSource,
         @InjectRepository(ClientStatisticsEntity)
         private clientStatisticsRepository: Repository<ClientStatisticsEntity>,
     ) {
 
     }
 
-    private async retryOnBusy<T>(operation: () => Promise<T>, maxRetries = 3): Promise<T> {
-        for (let attempt = 1; attempt <= maxRetries; attempt++) {
-            try {
-                return await operation();
-            } catch (e: any) {
-                if (e.code === 'SQLITE_BUSY' && attempt < maxRetries) {
-                    await new Promise(r => setTimeout(r, 100 * attempt));
-                    continue;
-                }
-                throw e;
+    public updateBulkAsync(clientStatistic: Partial<ClientStatisticsEntity>) {
+        const key = clientStatistic.clientId + clientStatistic.time.toString();
+        if (this.bulkAsyncUpdates[key] != null) {
+            this.bulkAsyncUpdates[key].shares = clientStatistic.shares;
+            this.bulkAsyncUpdates[key].acceptedCount = clientStatistic.acceptedCount;
+            return;
+        }
+
+        this.bulkAsyncUpdates[clientStatistic.clientId + clientStatistic.time.toString()] = clientStatistic;
+    }
+
+    public async doBulkAsyncUpdate() {
+        if (Object.keys(this.bulkAsyncUpdates).length < 1) {
+            return;
+        }
+
+        // Atomically swap the map so new updates go to a fresh map while we flush
+        const pending = this.bulkAsyncUpdates;
+        this.bulkAsyncUpdates = {};
+        const entries = Object.values(pending);
+
+        const clientIds: string[] = [];
+        const times: number[] = [];
+        const sharesArr: number[] = [];
+        const acceptedCounts: number[] = [];
+        const addresses: string[] = [];
+        const clientNames: string[] = [];
+        const sessionIds: string[] = [];
+
+        for (const value of entries) {
+            if (!value.clientId || typeof value.time !== 'number' || !Number.isFinite(value.time) ||
+                typeof value.shares !== 'number' || !Number.isFinite(value.shares) ||
+                typeof value.acceptedCount !== 'number' || !Number.isInteger(value.acceptedCount) ||
+                !value.address || !value.sessionId) {
+                console.warn('Skipping invalid statistics bulk upsert entry', value);
+                continue;
             }
+            clientIds.push(value.clientId);
+            times.push(value.time);
+            sharesArr.push(value.shares);
+            acceptedCounts.push(value.acceptedCount);
+            addresses.push(value.address);
+            clientNames.push(value.clientName || '');
+            sessionIds.push(value.sessionId);
+        }
+
+        if (clientIds.length === 0) {
+            return;
+        }
+
+        // UPSERT: INSERT new rows or UPDATE existing ones in a single batch
+        const query = `
+            INSERT INTO "client_statistics_entity" ("clientId", "time", "shares", "acceptedCount", "address", "clientName", "sessionId", "createdAt", "updatedAt")
+            SELECT unnest($1::uuid[]) AS "clientId",
+                   unnest($2::bigint[]) AS "time",
+                   unnest($3::numeric[]) AS "shares",
+                   unnest($4::int[]) AS "acceptedCount",
+                   unnest($5::varchar[]) AS "address",
+                   unnest($6::varchar[]) AS "clientName",
+                   unnest($7::varchar[]) AS "sessionId",
+                   NOW() AS "createdAt",
+                   NOW() AS "updatedAt"
+            ON CONFLICT ("clientId", "time")
+            DO UPDATE SET
+                "shares" = EXCLUDED."shares",
+                "acceptedCount" = EXCLUDED."acceptedCount",
+                "updatedAt" = NOW();
+        `;
+
+        try {
+            const start = Date.now();
+            await this.clientStatisticsRepository.query(query, [clientIds, times, sharesArr, acceptedCounts, addresses, clientNames, sessionIds]);
+            console.log(`Bulk stats upsert: ${clientIds.length} rows in ${Date.now() - start}ms`);
+        } catch (error: any) {
+            console.error(`Bulk stats upsert failed (${clientIds.length} rows): ${error.message}`);
         }
     }
 
-    public async update(clientStatistic: Partial<ClientStatisticsEntity>) {
-        return this.retryOnBusy(() =>
-            this.clientStatisticsRepository.update({
-                address: clientStatistic.address,
-                clientName: clientStatistic.clientName,
-                sessionId: clientStatistic.sessionId,
-                time: clientStatistic.time
-            },
-            {
-                shares: clientStatistic.shares,
-                acceptedCount: clientStatistic.acceptedCount,
-                updatedAt: new Date()
-            })
-        );
-    }
-
     public async insert(clientStatistic: Partial<ClientStatisticsEntity>) {
-        return this.retryOnBusy(() =>
-            this.clientStatisticsRepository.insert(clientStatistic)
-        );
+        await this.clientStatisticsRepository.insert(clientStatistic);
     }
 
     public async deleteOldStatistics() {
@@ -64,57 +115,7 @@ export class ClientStatisticsService {
             .execute();
     }
 
-    public async getChartDataForSite() {
 
-        var yesterday = new Date(new Date().getTime() - (24 * 60 * 60 * 1000));
-
-        const query = `
-            SELECT
-                time AS label,
-                ROUND(((SUM(shares) * 4294967296) / 600)) AS data
-            FROM
-                client_statistics_entity AS entry
-            WHERE
-                entry.time > ${yesterday.getTime()}
-            GROUP BY
-                time
-            ORDER BY
-                time
-            LIMIT 144;
-
-    `;
-
-        const result: any[] = await this.clientStatisticsRepository.query(query);
-
-
-        return result.map(res => {
-            res.label = new Date(res.label).toISOString();
-            return res;
-        }).slice(0, result.length - 1)
-
-    }
-
-
-    // public async getHashRateForAddress(address: string) {
-
-    //     const oneHour = new Date(new Date().getTime() - (60 * 60 * 1000));
-
-    //     const query = `
-    //         SELECT
-    //         SUM(entry.shares) AS difficultySum
-    //         FROM
-    //             client_statistics_entity AS entry
-    //         WHERE
-    //             entry.address = ? AND entry.time > ${oneHour}
-    //     `;
-
-    //     const result = await this.clientStatisticsRepository.query(query, [address]);
-
-    //     const difficultySum = result[0].difficultySum;
-
-    //     return (difficultySum * 4294967296) / (600);
-
-    // }
 
     public async getChartDataForAddress(address: string) {
 
@@ -122,12 +123,12 @@ export class ClientStatisticsService {
 
         const query = `
                 SELECT
-                    time label,
+                    time AS label,
                     (SUM(shares) * 4294967296) / 600 AS data
                 FROM
                     client_statistics_entity AS entry
                 WHERE
-                    entry.address = ? AND entry.time > ${yesterday.getTime()}
+                    entry.address = $1 AND entry.time > $2
                 GROUP BY
                     time
                 ORDER BY
@@ -136,10 +137,10 @@ export class ClientStatisticsService {
 
         `;
 
-        const result = await this.clientStatisticsRepository.query(query, [address]);
+        const result = await this.clientStatisticsRepository.query(query, [address, yesterday.getTime()]);
 
         return result.map(res => {
-            res.label = new Date(res.label).toISOString();
+            res.label = new Date(parseInt(res.label)).toISOString();
             return res;
         }).slice(0, result.length - 1);
 
@@ -157,10 +158,10 @@ export class ClientStatisticsService {
             FROM
                 client_statistics_entity AS entry
             WHERE
-                entry.address = ? AND entry.clientName = ? AND entry.time > ${oneHour.getTime()}
+                entry.address = $1 AND entry.clientName = $2 AND entry.time > $3
         `;
 
-        const result = await this.clientStatisticsRepository.query(query, [address, clientName]);
+        const result = await this.clientStatisticsRepository.query(query, [address, clientName, oneHour.getTime()]);
 
 
         const difficultySum = result[0].difficultySum;
@@ -174,12 +175,12 @@ export class ClientStatisticsService {
 
         const query = `
             SELECT
-                time label,
+                time AS label,
                 (SUM(shares) * 4294967296) / 600 AS data
             FROM
                 client_statistics_entity AS entry
             WHERE
-                entry.address = ? AND entry.clientName = ? AND entry.time > ${yesterday.getTime()}
+                entry.address = $1 AND entry."clientName" = $2 AND entry.time > $3
             GROUP BY
                 time
             ORDER BY
@@ -187,10 +188,10 @@ export class ClientStatisticsService {
             LIMIT 144;
         `;
 
-        const result = await this.clientStatisticsRepository.query(query, [address, clientName]);
+        const result = await this.clientStatisticsRepository.query(query, [address, clientName, yesterday.getTime()]);
 
         return result.map(res => {
-            res.label = new Date(res.label).toISOString();
+            res.label = new Date(parseInt(res.label)).toISOString();
             return res;
         }).slice(0, result.length - 1);
 
@@ -198,59 +199,17 @@ export class ClientStatisticsService {
     }
 
 
-    public async getHashRateForSession(address: string, clientName: string, sessionId: string) {
-
-        const query = `
-            SELECT
-                createdAt,
-                updatedAt,
-                shares
-            FROM
-                client_statistics_entity AS entry
-            WHERE
-                entry.address = ? AND entry.clientName = ? AND entry.sessionId = ?
-            ORDER BY time DESC
-            LIMIT 2;
-        `;
-
-        const result = await this.clientStatisticsRepository.query(query, [address, clientName, sessionId]);
-
-        if (result.length < 1) {
-            return 0;
-        }
-
-        const latestStat = result[0];
-
-        if (result.length < 2) {
-            const time = new Date(latestStat.updatedAt).getTime() - new Date(latestStat.createdAt).getTime();
-            // 1min
-            if (time < 1000 * 60) {
-                return 0;
-            }
-            return (latestStat.shares * 4294967296) / (time / 1000);
-        } else {
-            const secondLatestStat = result[1];
-            const time = new Date(latestStat.updatedAt).getTime() - new Date(secondLatestStat.createdAt).getTime();
-            // 1min
-            if (time < 1000 * 60) {
-                return 0;
-            }
-            return ((latestStat.shares + secondLatestStat.shares) * 4294967296) / (time / 1000);
-        }
-
-    }
-
-    public async getChartDataForSession(address: string, clientName: string, sessionId: string) {
+    public async getChartDataForSession(clientId: string) {
         var yesterday = new Date(new Date().getTime() - (24 * 60 * 60 * 1000));
 
         const query = `
             SELECT
-                time label,
+                time AS label,
                 (SUM(shares) * 4294967296) / 600 AS data
             FROM
                 client_statistics_entity AS entry
             WHERE
-                entry.address = ? AND entry.clientName = ? AND entry.sessionId = ? AND entry.time > ${yesterday.getTime()}
+                entry."clientId" = $1 AND entry.time > $2
             GROUP BY
                 time
             ORDER BY
@@ -258,10 +217,10 @@ export class ClientStatisticsService {
             LIMIT 144;
         `;
 
-        const result = await this.clientStatisticsRepository.query(query, [address, clientName, sessionId]);
+        const result = await this.clientStatisticsRepository.query(query, [clientId, yesterday.getTime()]);
 
         return result.map(res => {
-            res.label = new Date(res.label).toISOString();
+            res.label = new Date(parseInt(res.label)).toISOString();
             return res;
         }).slice(0, result.length - 1);
 

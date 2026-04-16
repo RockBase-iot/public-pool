@@ -2,8 +2,7 @@ import { Injectable } from '@nestjs/common';
 import * as bitcoinjs from 'bitcoinjs-lib';
 import * as merkle from 'merkle-lib';
 import * as merkleProof from 'merkle-lib/proof';
-import { combineLatest, delay, EMPTY, filter, from, interval, map, Observable, shareReplay, startWith, switchMap, tap } from 'rxjs';
-import { catchError } from 'rxjs/operators';
+import { filter, map, Observable, shareReplay, tap } from 'rxjs';
 
 import { MiningJob } from '../models/MiningJob';
 import { BitcoinRpcService } from './bitcoin-rpc.service';
@@ -25,54 +24,35 @@ export interface IJobTemplate {
 @Injectable()
 export class StratumV1JobsService {
 
-    private lastIntervalCount: number;
-    private skipNext: boolean = false;
     public newMiningJob$: Observable<IJobTemplate>;
-
     public latestJobId: number = 1;
     public latestJobTemplateId: number = 1;
-
     public jobs: { [jobId: string]: MiningJob } = {};
-
     public blocks: { [id: number]: IJobTemplate } = {};
 
-    // offset the interval so that all the cluster processes don't try and refresh at the same time.
-    private delay = process.env.NODE_APP_INSTANCE == null ? 0 : parseInt(process.env.NODE_APP_INSTANCE) * 5000;
+    private lastBlockHeight = 0;
+    public broadcastGeneration = 0;
+    public latestJobTemplate: IJobTemplate = null;
 
     constructor(
         private readonly bitcoinRpcService: BitcoinRpcService
     ) {
 
-        this.newMiningJob$ = combineLatest([this.bitcoinRpcService.newBlock$, interval(60000).pipe(delay(this.delay), startWith(-1))]).pipe(
-            switchMap(([miningInfo, interval]) => {
-                return from(this.bitcoinRpcService.getBlockTemplate(miningInfo.blocks)).pipe(
-                    map((blockTemplate) => {
-                        return {
-                            blockTemplate,
-                            interval
-                        }
-                    }),
-                    catchError((err) => {
-                        console.error(`getBlockTemplate failed (height ${miningInfo.blocks}), will retry on next trigger: ${err.message}`);
-                        return EMPTY;
-                    })
-                )
-            }),
-            map(({ blockTemplate, interval }) => {
+        this.newMiningJob$ = this.bitcoinRpcService.newBlockTemplate$.pipe(
+            map((blockTemplate) => {
+
+                if (process.env.MASTER == 'true') {
+                    console.log('Updating block template');
+                }
 
                 let clearJobs = false;
-                if (this.lastIntervalCount === interval) {
+                const currentBlockHeight = this.bitcoinRpcService.miningInfo.blocks;
+
+                if (this.lastBlockHeight == 0 || this.lastBlockHeight != currentBlockHeight) {
+                    console.log('New template is new block, clearing jobs');
                     clearJobs = true;
-                    this.skipNext = true;
-                    console.log('new block')
+                    this.lastBlockHeight = currentBlockHeight;
                 }
-
-                if (this.skipNext == true && clearJobs == false) {
-                    this.skipNext = false;
-                    return null;
-                }
-
-                this.lastIntervalCount = interval;
 
                 const currentTime = Math.floor(new Date().getTime() / 1000);
                 return {
@@ -132,37 +112,41 @@ export class StratumV1JobsService {
             }),
             tap((data) => {
                 if (data.blockData.clearJobs) {
+                    this.broadcastGeneration++;
                     this.blocks = {};
                     this.jobs = {};
-                }else{
+                } else {
                     const now = new Date().getTime();
                     // Delete old templates (5 minutes)
-                    for(const templateId in this.blocks){
-                        if(now - this.blocks[templateId].blockData.creation  > (1000 * 60 * 5)){
+                    for (const templateId in this.blocks) {
+                        if (now - this.blocks[templateId].blockData.creation > (1000 * 60 * 5)) {
                             delete this.blocks[templateId];
                         }
                     }
                     // Delete old jobs (5 minutes)
                     for (const jobId in this.jobs) {
-                        if(now - this.jobs[jobId].creation > (1000 * 60 * 5)){
+                        if (now - this.jobs[jobId].creation > (1000 * 60 * 5)) {
                             delete this.jobs[jobId];
                         }
                     }
                 }
                 this.blocks[data.blockData.id] = data;
+                this.latestJobTemplate = data;
             }),
             shareReplay({ refCount: true, bufferSize: 1 })
         )
+
+        this.newMiningJob$.subscribe();
     }
 
     private calculateNetworkDifficulty(nBits: number) {
-        const mantissa: number = nBits & 0x007fffff;       // Extract the mantissa from nBits
-        const exponent: number = (nBits >> 24) & 0xff;       // Extract the exponent from nBits
+        const mantissa: number = nBits & 0x007fffff;
+        const exponent: number = (nBits >> 24) & 0xff;
 
-        const target: number = mantissa * Math.pow(256, (exponent - 3));   // Calculate the target value
+        const target: number = mantissa * Math.pow(256, (exponent - 3));
 
-        const maxTarget = Math.pow(2, 208) * 65535; // Easiest target (max_target)
-        const difficulty: number = maxTarget / target;    // Calculate the difficulty
+        const maxTarget = Math.pow(2, 208) * 65535;
+        const difficulty: number = maxTarget / target;
 
         return difficulty;
     }
@@ -173,25 +157,24 @@ export class StratumV1JobsService {
         return bytes;
     }
 
-    public getJobTemplateById(jobTemplateId: string): IJobTemplate | null {
-        return this.blocks[jobTemplateId];
+    public getNextId(): string {
+        return (this.latestJobId++).toString(16);
+    }
+
+    public getNextTemplateId(): string {
+        return (this.latestJobTemplateId++).toString(16);
     }
 
     public addJob(job: MiningJob) {
         this.jobs[job.jobId] = job;
-        this.latestJobId++;
     }
 
-    public getJobById(jobId: string) {
+    public getJobById(jobId: string): MiningJob | undefined {
         return this.jobs[jobId];
     }
 
-    public getNextTemplateId() {
-        return this.latestJobTemplateId.toString(16);
+    public getJobTemplateById(id: string): IJobTemplate | undefined {
+        return this.blocks[id];
     }
-    public getNextId() {
-        return this.latestJobId.toString(16);
-    }
-
 
 }

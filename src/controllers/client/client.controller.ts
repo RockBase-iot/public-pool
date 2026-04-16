@@ -30,7 +30,7 @@ export class ClientController {
                     return {
                         sessionId: worker.sessionId,
                         name: worker.clientName,
-                        bestDifficulty: worker.bestDifficulty.toFixed(2),
+                        bestDifficulty: parseFloat(worker.bestDifficulty as any).toFixed(2),
                         hashRate: worker.hashRate,
                         startTime: worker.startTime,
                         lastSeen: worker.updatedAt
@@ -73,9 +73,9 @@ export class ClientController {
 
         const worker = await this.clientService.getBySessionId(address, workerName, sessionId);
         if (worker == null) {
-            return new NotFoundException();
+            throw new NotFoundException();
         }
-        const chartData = await this.clientStatisticsService.getChartDataForSession(worker.address, worker.clientName, worker.sessionId);
+        const chartData = await this.clientStatisticsService.getChartDataForSession(worker.id);
 
         return {
             sessionId: worker.sessionId,

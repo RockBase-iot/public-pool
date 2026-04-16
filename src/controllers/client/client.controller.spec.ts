@@ -1,9 +1,8 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { TypeOrmModule } from '@nestjs/typeorm';
 
-import { AddressSettingsModule } from '../../ORM/address-settings/address-settings.module';
-import { ClientStatisticsModule } from '../../ORM/client-statistics/client-statistics.module';
-import { ClientModule } from '../../ORM/client/client.module';
+import { AddressSettingsService } from '../../ORM/address-settings/address-settings.service';
+import { ClientStatisticsService } from '../../ORM/client-statistics/client-statistics.service';
+import { ClientService } from '../../ORM/client/client.service';
 import { ClientController } from './client.controller';
 
 describe('ClientController', () => {
@@ -11,21 +10,32 @@ describe('ClientController', () => {
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
-      imports: [
-        TypeOrmModule.forRoot({
-          type: 'sqlite',
-          database: './DB/public-pool.test.sqlite',
-          synchronize: true,
-          autoLoadEntities: true,
-          cache: true,
-          logging: false
-        }),
-        AddressSettingsModule,
-        ClientModule,
-        ClientStatisticsModule
-      ],
       controllers: [ClientController],
-
+      providers: [
+        {
+          provide: ClientService,
+          useValue: {
+            getByName: jest.fn(),
+            getByAddress: jest.fn(),
+            getBySessionId: jest.fn(),
+          },
+        },
+        {
+          provide: ClientStatisticsService,
+          useValue: {
+            getChartDataForGroup: jest.fn(),
+            getHashRateForGroup: jest.fn(),
+            getChartDataForSession: jest.fn(),
+            getChartDataForAddress: jest.fn(),
+          },
+        },
+        {
+          provide: AddressSettingsService,
+          useValue: {
+            getSettings: jest.fn(),
+          },
+        },
+      ],
     }).compile();
 
     controller = module.get<ClientController>(ClientController);

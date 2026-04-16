@@ -42,6 +42,27 @@ services:
     ports:
       - 8333:8333
 
+  postgres:
+    image: postgres:16-alpine
+    container_name: postgres
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+    environment:
+      POSTGRES_USER: ${DB_USERNAME:-publicpool}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-publicpool}
+      POSTGRES_DB: ${DB_DATABASE:-publicpool}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-publicpool}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   public-pool:
     container_name: public-pool
     build:
@@ -49,19 +70,30 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     stop_grace_period: 30s
+    depends_on:
+      postgres:
+        condition: service_healthy
     deploy:
       resources:
         limits:
-          cpus: '5.0'
-          memory: 10G
+          cpus: '${POOL_CPUS:-5.0}'
+          memory: ${POOL_MEMORY:-10G}
     ports:
       - "0.0.0.0:3333:3333/tcp"
     volumes:
-      - "public-pool-db:/public-pool/DB"
       - "./pool.env:/public-pool/.env:ro"
     environment:
       - NODE_ENV=production
-      - NODE_OPTIONS=--max-old-space-size=8192
+      - NODE_HEAP_MB=${NODE_HEAP_MB:-2048}
+      - PM2_MAX_MEMORY=${PM2_MAX_MEMORY:-2500M}
+      - PM2_WORKERS=${PM2_WORKERS:-4}
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USERNAME=${DB_USERNAME:-publicpool}
+      - DB_PASSWORD=${DB_PASSWORD:-publicpool}
+      - DB_DATABASE=${DB_DATABASE:-publicpool}
+      - MASTER=true
+      - STRATUM_PORTS=3333
     ulimits:
       nofile:
         soft: 65535
@@ -99,4 +131,4 @@ services:
 volumes:
     lets-encrypt-data:
     bitcoind-data:
-    public-pool-db:
+    postgres-data:

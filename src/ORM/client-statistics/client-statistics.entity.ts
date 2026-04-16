@@ -1,15 +1,14 @@
-import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
+import { Column, Entity, Index, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
 
+import { ClientEntity } from '../client/client.entity';
 import { TrackedEntity } from '../utils/TrackedEntity.entity';
 
 @Entity()
-//Index for getHashRateForSession
-@Index(["address", "clientName", "sessionId"])
-//Index for statistics save
-@Index(["address", "clientName", "sessionId", "time"])
+//Index for statistics save + UPSERT conflict target
+@Index(["clientId", "time"], { unique: true })
 export class ClientStatisticsEntity extends TrackedEntity {
 
-    @PrimaryGeneratedColumn()
+    @PrimaryGeneratedColumn({type: 'bigint'})
     id: number;
 
     @Column({ length: 62, type: 'varchar' })
@@ -22,14 +21,27 @@ export class ClientStatisticsEntity extends TrackedEntity {
     sessionId: string;
 
     @Index()
-    @Column({ type: 'integer' })
+    @Column({ type: 'bigint' })
     time: number;
 
-    @Column({ type: 'real' })
+    @Column({ type: 'decimal' })
     shares: number;
 
-    @Column({ default: 0, type: 'integer' })
+    @Column({ default: 0, type: 'bigint' })
     acceptedCount: number;
+
+
+
+    @ManyToOne(
+        () => ClientEntity,
+        clientEntity => clientEntity.statistics,
+        { nullable: false, }
+    )
+    client: ClientEntity;
+
+    @Index()
+    @Column({ name: 'clientId' })
+    public clientId: string;
 
 
 }

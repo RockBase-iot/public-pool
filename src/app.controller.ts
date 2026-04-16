@@ -3,11 +3,14 @@ import { Controller, Get, Inject } from '@nestjs/common';
 import { Cache } from 'cache-manager';
 import { firstValueFrom } from 'rxjs';
 
+import { UserAgentReportService } from './ORM/_views/user-agent-report/user-agent-report.service';
 import { AddressSettingsService } from './ORM/address-settings/address-settings.service';
 import { BlocksService } from './ORM/blocks/blocks.service';
 import { ClientStatisticsService } from './ORM/client-statistics/client-statistics.service';
 import { ClientService } from './ORM/client/client.service';
+import { HomeGraphService } from './ORM/home-graph/home-graph.service';
 import { BitcoinRpcService } from './services/bitcoin-rpc.service';
+import { UserAgentReportView } from './ORM/_views/user-agent-report/user-agent-report.view';
 
 @Controller()
 export class AppController {
@@ -20,7 +23,9 @@ export class AppController {
     private readonly clientStatisticsService: ClientStatisticsService,
     private readonly blocksService: BlocksService,
     private readonly bitcoinRpcService: BitcoinRpcService,
+    private readonly homeGraphService: HomeGraphService,
     private readonly addressSettingsService: AddressSettingsService,
+    private readonly userAgentReportService: UserAgentReportService
   ) { }
 
   @Get('info')
@@ -36,8 +41,32 @@ export class AppController {
 
 
     const blockData = await this.blocksService.getFoundBlocks();
-    const userAgents = await this.clientService.getUserAgents();
     const highScores = await this.addressSettingsService.getHighScores();
+
+    const other: {
+      count: number,
+      bestDifficulty: number,
+      totalHashRate: number;
+    } = {
+      count: 0,
+      bestDifficulty: 0,
+      totalHashRate: 0
+    };
+    const userAgents: UserAgentReportView[] = (await this.userAgentReportService.getReport()).reduce((pre, cur, idx, arr) => {
+      // If less than 10Th/s and less than 100 devices, add to 'other'
+      if (parseInt(cur.totalHashRate) < 10000000000000 && parseInt(cur.count) < 200) {
+        other.totalHashRate += parseFloat(cur.totalHashRate);
+        other.count += parseInt(cur.count);
+        if (other.bestDifficulty < cur.bestDifficulty) {
+          other.bestDifficulty = cur.bestDifficulty;
+        }
+      } else {
+        pre.push(cur);
+      }
+      return pre;
+    }, []);
+
+    userAgents.push({ userAgent: 'Other', count: other.count.toString(), bestDifficulty: other.bestDifficulty, totalHashRate: other.totalHashRate.toString() })
 
     const data = {
       blockData,
@@ -46,8 +75,8 @@ export class AppController {
       uptime: this.uptime
     };
 
-    //1 min
-    await this.cacheManager.set(CACHE_KEY, data, 1 * 60 * 1000);
+    //5 min
+    await this.cacheManager.set(CACHE_KEY, data, 5 * 60 * 1000);
 
     return data;
 
@@ -63,11 +92,11 @@ export class AppController {
       return cachedResult;
     }
 
+    const userAgents = await this.userAgentReportService.getReport();
 
-    const userAgents = await this.clientService.getUserAgents();
     const totalHashRate = userAgents.reduce((acc, userAgent) => acc + parseFloat(userAgent.totalHashRate), 0);
-    const totalMiners = userAgents.reduce((acc, userAgent) => acc + parseInt(userAgent.count), 0);
-    const blockHeight = (await firstValueFrom(this.bitcoinRpcService.newBlock$)).blocks;
+    const totalMiners = userAgents.reduce((acc, userAgent) => acc + parseFloat(userAgent.count), 0);
+    const blockHeight = this.bitcoinRpcService.miningInfo?.blocks || 0;
     const blocksFound = await this.blocksService.getFoundBlocks();
 
     const data = {
@@ -86,8 +115,17 @@ export class AppController {
 
   @Get('network')
   public async network() {
-    const miningInfo = await firstValueFrom(this.bitcoinRpcService.newBlock$);
-    return miningInfo;
+    if (this.bitcoinRpcService.miningInfo == null) {
+      return {
+        blocks: 0,
+        difficulty: 0,
+        networkhashps: 0,
+        pooledtx: 0,
+        chain: 'unknown',
+        warnings: 'Bitcoin RPC unavailable'
+      };
+    }
+    return this.bitcoinRpcService.miningInfo;
   }
 
   @Get('info/chart')
@@ -101,7 +139,7 @@ export class AppController {
       return cachedResult;
     }
 
-    const chartData = await this.clientStatisticsService.getChartDataForSite();
+    const chartData = await this.homeGraphService.getChartDataForSite();
 
     //10 min
     await this.cacheManager.set(CACHE_KEY, chartData, 10 * 60 * 1000);

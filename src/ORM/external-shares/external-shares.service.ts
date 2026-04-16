@@ -14,15 +14,17 @@ export class ExternalSharesService {
         return await this.externalSharesRepository.insert(externalShare);
     }
 
-    public async getTopDifficulties(): Promise<Array<{userAgent: string, time: number, externalPoolName: string, difficulty: number}>> {
+    public async getTopDifficulties(): Promise<Array<{address: string, userAgent: string, time: number, externalPoolName: string, difficulty: number}>> {
+        // Use a subquery to find the row with the highest difficulty per address
         return await this.externalSharesRepository
             .createQueryBuilder('share')
-            .select('share.userAgent', 'userAgent')
+            .select('DISTINCT ON (share.address) share.address', 'address')
+            .addSelect('share.userAgent', 'userAgent')
             .addSelect('share.time', 'time')
             .addSelect('share.externalPoolName', 'externalPoolName')
-            .addSelect('MAX(share.difficulty)', 'difficulty')
-            .groupBy('share.address')
-            .orderBy('MAX(share.difficulty)', 'DESC')
+            .addSelect('share.difficulty', 'difficulty')
+            .orderBy('share.address')
+            .addOrderBy('share.difficulty', 'DESC')
             .limit(10)
             .getRawMany();
     }

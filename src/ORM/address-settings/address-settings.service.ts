@@ -31,26 +31,8 @@ export class AddressSettingsService {
         return await this.addressSettingsRepository.update({ address }, { bestDifficulty, bestDifficultyUserAgent });
     }
 
-    public async getHighScores() {
-        return await this.addressSettingsRepository.createQueryBuilder()
-            .select('"updatedAt", "bestDifficulty", "bestDifficultyUserAgent"')
-            .orderBy('"bestDifficulty"', 'DESC')
-            .limit(10)
-            .execute();
-    }
-
     public async createNew(address: string) {
         return await this.addressSettingsRepository.save({ address });
-    }
-
-    public async addShares(address: string, shares: number) {
-        return await this.addressSettingsRepository.createQueryBuilder()
-            .update(AddressSettingsEntity)
-            .set({
-                shares: () => `"shares" + ${shares}` // Use the actual value of shares here
-            })
-            .where('address = :address', { address })
-            .execute();
     }
 
     public async resetBestDifficultyAndShares() {
@@ -58,5 +40,13 @@ export class AddressSettingsService {
             shares: 0,
             bestDifficulty: 0
         });
+    }
+
+    public async getHighScores() {
+        return await this.addressSettingsRepository.createQueryBuilder()
+            .select('"updatedAt", "bestDifficulty", "bestDifficultyUserAgent"')
+            .orderBy('"bestDifficulty"', 'DESC')
+            .limit(10)
+            .execute();
     }
 }

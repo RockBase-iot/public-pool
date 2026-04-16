@@ -11,14 +11,13 @@ export class AddressSettingsEntity extends TrackedEntity {
     @Column({ default: 0 })
     shares: number;
 
-    @Column({ type: 'real', default: 0 })
+    @Column({ type: 'decimal', default: 0 })
     bestDifficulty: number;
-
-    @Column({ nullable: true })
-    miscCoinbaseScriptData: string;
 
     @Column({ nullable: true })
     bestDifficultyUserAgent: string;
 
-}
+    @Column({ nullable: true })
+    miscCoinbaseScriptData: string;
 
+}
