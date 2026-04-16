@@ -74,7 +74,7 @@ const ORMModules = [
                         HomeGraphEntity,
                         UserAgentReportView
                     ],
-                    synchronize: configService.get('PRODUCTION') != 'true',
+                    synchronize: configService.get('PRODUCTION') != 'true' && process.env.MASTER === 'true',
                     logging: false,
                     poolSize: parseInt(configService.get('DB_POOL_SIZE')) || 5,
                     migrations: [

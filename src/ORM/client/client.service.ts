@@ -180,7 +180,12 @@ export class ClientService {
     }
 
     public async deleteAll() {
-        return await this.clientRepository.softDelete({})
+        await this.clientRepository
+            .createQueryBuilder()
+            .update(ClientEntity)
+            .set({ deletedAt: () => 'NOW()' })
+            .where('"deletedAt" IS NULL')
+            .execute();
     }
 
     // public async getUserAgents() {

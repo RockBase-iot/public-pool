@@ -45,7 +45,11 @@ export class StratumV1Service implements OnModuleInit {
     async onModuleInit(): Promise<void> {
 
         if (process.env.MASTER == 'true') {
-            await this.clientService.deleteAll();
+            try {
+                await this.clientService.deleteAll();
+            } catch (e: any) {
+                console.error(`Failed to clean up stale clients on startup: ${e.message}`);
+            }
         }
 
         // wait for all the other processes to init for an even connection distribution
